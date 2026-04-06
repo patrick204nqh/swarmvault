@@ -1,0 +1,218 @@
+import { z } from "zod";
+
+export const providerCapabilitySchema = z.enum([
+  "responses",
+  "chat",
+  "structured",
+  "tools",
+  "vision",
+  "embeddings",
+  "streaming",
+  "local"
+]);
+
+export type ProviderCapability = z.infer<typeof providerCapabilitySchema>;
+
+export const providerTypeSchema = z.enum([
+  "heuristic",
+  "openai",
+  "ollama",
+  "anthropic",
+  "gemini",
+  "openai-compatible",
+  "custom"
+]);
+
+export type ProviderType = z.infer<typeof providerTypeSchema>;
+
+export type PageKind = "index" | "source" | "concept" | "entity" | "output";
+export type Freshness = "fresh" | "stale";
+export type ClaimStatus = "extracted" | "inferred" | "conflicted" | "stale";
+export type Polarity = "positive" | "negative" | "neutral";
+
+export interface GenerationAttachment {
+  mimeType: string;
+  filePath: string;
+}
+
+export interface GenerationRequest {
+  system?: string;
+  prompt: string;
+  attachments?: GenerationAttachment[];
+  maxOutputTokens?: number;
+}
+
+export interface GenerationResponse {
+  text: string;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+  };
+}
+
+export interface ProviderAdapter {
+  readonly id: string;
+  readonly type: ProviderType;
+  readonly model: string;
+  readonly capabilities: Set<ProviderCapability>;
+  generateText(request: GenerationRequest): Promise<GenerationResponse>;
+  generateStructured<T>(request: GenerationRequest, schema: z.ZodType<T>): Promise<T>;
+}
+
+export interface ProviderConfig {
+  type: ProviderType;
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  headers?: Record<string, string>;
+  module?: string;
+  capabilities?: ProviderCapability[];
+  apiStyle?: "responses" | "chat";
+}
+
+export interface VaultConfig {
+  workspace: {
+    rawDir: string;
+    wikiDir: string;
+    stateDir: string;
+    agentDir: string;
+  };
+  providers: Record<string, ProviderConfig>;
+  tasks: {
+    compileProvider: string;
+    queryProvider: string;
+    lintProvider: string;
+    visionProvider: string;
+  };
+  viewer: {
+    port: number;
+  };
+  agents: Array<"codex" | "claude" | "cursor">;
+}
+
+export interface ResolvedPaths {
+  rootDir: string;
+  rawDir: string;
+  wikiDir: string;
+  stateDir: string;
+  agentDir: string;
+  manifestsDir: string;
+  extractsDir: string;
+  analysesDir: string;
+  viewerDistDir: string;
+  graphPath: string;
+  searchDbPath: string;
+  compileStatePath: string;
+  configPath: string;
+}
+
+export interface SourceManifest {
+  sourceId: string;
+  title: string;
+  originType: "file" | "url";
+  sourceKind: "markdown" | "text" | "pdf" | "image" | "html" | "binary";
+  originalPath?: string;
+  url?: string;
+  storedPath: string;
+  extractedTextPath?: string;
+  mimeType: string;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalyzedTerm {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface SourceClaim {
+  id: string;
+  text: string;
+  confidence: number;
+  status: ClaimStatus;
+  polarity: Polarity;
+  citation: string;
+}
+
+export interface SourceAnalysis {
+  sourceId: string;
+  sourceHash: string;
+  title: string;
+  summary: string;
+  concepts: AnalyzedTerm[];
+  entities: AnalyzedTerm[];
+  claims: SourceClaim[];
+  questions: string[];
+  producedAt: string;
+}
+
+export interface GraphNode {
+  id: string;
+  type: "source" | "concept" | "entity";
+  label: string;
+  pageId?: string;
+  freshness?: Freshness;
+  confidence?: number;
+  sourceIds: string[];
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  status: ClaimStatus;
+  confidence: number;
+  provenance: string[];
+}
+
+export interface GraphPage {
+  id: string;
+  path: string;
+  title: string;
+  kind: PageKind;
+  sourceIds: string[];
+  nodeIds: string[];
+  freshness: Freshness;
+  confidence: number;
+  backlinks: string[];
+  sourceHashes: Record<string, string>;
+}
+
+export interface GraphArtifact {
+  generatedAt: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  sources: SourceManifest[];
+  pages: GraphPage[];
+}
+
+export interface CompileResult {
+  graphPath: string;
+  pageCount: number;
+  changedPages: string[];
+  sourceCount: number;
+}
+
+export interface SearchResult {
+  pageId: string;
+  path: string;
+  title: string;
+  snippet: string;
+  rank: number;
+}
+
+export interface QueryResult {
+  answer: string;
+  savedTo?: string;
+  citations: string[];
+}
+
+export interface LintFinding {
+  severity: "error" | "warning" | "info";
+  code: string;
+  message: string;
+  pagePath?: string;
+}

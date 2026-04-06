@@ -1,0 +1,327 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import matter from "gray-matter";
+import { analyzeSource, analysisSignature } from "./analysis.js";
+import { installConfiguredAgents } from "./agents.js";
+import { initWorkspace, loadVaultConfig } from "./config.js";
+import { ingestInput, listManifests, readExtractedText } from "./ingest.js";
+import { appendLogEntry } from "./logs.js";
+import { buildAggregatePage, buildIndexPage, buildOutputPage, buildSectionIndex, buildSourcePage } from "./markdown.js";
+import { getProviderForTask } from "./providers/registry.js";
+import { rebuildSearchIndex, searchPages } from "./search.js";
+import type { CompileResult, GraphArtifact, GraphEdge, GraphNode, GraphPage, LintFinding, QueryResult, SourceAnalysis, SourceManifest } from "./types.js";
+import { ensureDir, fileExists, normalizeWhitespace, readJsonFile, slugify, truncate, uniqueBy, writeFileIfChanged, writeJsonFile } from "./utils.js";
+
+function buildGraph(manifests: SourceManifest[], analyses: SourceAnalysis[], pages: GraphPage[]): GraphArtifact {
+  const sourceNodes: GraphNode[] = manifests.map((manifest) => ({
+    id: `source:${manifest.sourceId}`,
+    type: "source",
+    label: manifest.title,
+    pageId: `source:${manifest.sourceId}`,
+    freshness: "fresh",
+    confidence: 1,
+    sourceIds: [manifest.sourceId]
+  }));
+
+  const conceptMap = new Map<string, GraphNode>();
+  const entityMap = new Map<string, GraphNode>();
+  const edges: GraphEdge[] = [];
+
+  for (const analysis of analyses) {
+    for (const concept of analysis.concepts) {
+      const existing = conceptMap.get(concept.id);
+      conceptMap.set(concept.id, {
+        id: concept.id,
+        type: "concept",
+        label: concept.name,
+        pageId: `concept:${slugify(concept.name)}`,
+        freshness: "fresh",
+        confidence: 0.7,
+        sourceIds: [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])]
+      });
+      edges.push({
+        id: `${analysis.sourceId}->${concept.id}`,
+        source: `source:${analysis.sourceId}`,
+        target: concept.id,
+        relation: "mentions",
+        status: "extracted",
+        confidence: 0.72,
+        provenance: [analysis.sourceId]
+      });
+    }
+
+    for (const entity of analysis.entities) {
+      const existing = entityMap.get(entity.id);
+      entityMap.set(entity.id, {
+        id: entity.id,
+        type: "entity",
+        label: entity.name,
+        pageId: `entity:${slugify(entity.name)}`,
+        freshness: "fresh",
+        confidence: 0.7,
+        sourceIds: [...new Set([...(existing?.sourceIds ?? []), analysis.sourceId])]
+      });
+      edges.push({
+        id: `${analysis.sourceId}->${entity.id}`,
+        source: `source:${analysis.sourceId}`,
+        target: entity.id,
+        relation: "mentions",
+        status: "extracted",
+        confidence: 0.72,
+        provenance: [analysis.sourceId]
+      });
+    }
+
+    const conflictClaims = analysis.claims.filter((claim) => claim.polarity === "negative");
+    for (const claim of conflictClaims) {
+      const related = analyses
+        .filter((item) => item.sourceId !== analysis.sourceId)
+        .flatMap((item) => item.claims.filter((other) => other.polarity === "positive" && other.text.split(" ").some((word) => claim.text.includes(word))));
+      for (const other of related) {
+        edges.push({
+          id: `${claim.id}->${other.id}`,
+          source: `source:${analysis.sourceId}`,
+          target: `source:${other.citation}`,
+          relation: "conflicted_with",
+          status: "conflicted",
+          confidence: 0.6,
+          provenance: [analysis.sourceId, other.citation]
+        });
+      }
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    nodes: [...sourceNodes, ...conceptMap.values(), ...entityMap.values()],
+    edges,
+    sources: manifests,
+    pages
+  };
+}
+
+async function writePage(rootDir: string, relativePath: string, content: string, changedPages: string[]): Promise<void> {
+  const absolutePath = path.resolve(rootDir, "wiki", relativePath);
+  const changed = await writeFileIfChanged(absolutePath, content);
+  if (changed) {
+    changedPages.push(relativePath);
+  }
+}
+
+function aggregateItems(analyses: SourceAnalysis[], kind: "concepts" | "entities"): Array<{ name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }> {
+  const grouped = new Map<string, { name: string; descriptions: string[]; sourceAnalyses: SourceAnalysis[]; sourceHashes: Record<string, string> }>();
+  for (const analysis of analyses) {
+    for (const item of analysis[kind]) {
+      const key = slugify(item.name);
+      const existing = grouped.get(key) ?? {
+        name: item.name,
+        descriptions: [],
+        sourceAnalyses: [],
+        sourceHashes: {}
+      };
+      existing.descriptions.push(item.description);
+      existing.sourceAnalyses.push(analysis);
+      existing.sourceHashes[analysis.sourceId] = analysis.sourceHash;
+      grouped.set(key, existing);
+    }
+  }
+  return [...grouped.values()];
+}
+
+export async function initVault(rootDir: string): Promise<void> {
+  await initWorkspace(rootDir);
+  await installConfiguredAgents(rootDir);
+}
+
+export async function compileVault(rootDir: string): Promise<CompileResult> {
+  const { paths } = await initWorkspace(rootDir);
+  const provider = await getProviderForTask(rootDir, "compileProvider");
+  const manifests = await listManifests(rootDir);
+  const analyses = await Promise.all(
+    manifests.map(async (manifest) => analyzeSource(manifest, await readExtractedText(rootDir, manifest), provider, paths))
+  );
+
+  const changedPages: string[] = [];
+  const pages: GraphPage[] = [];
+
+  await Promise.all([
+    ensureDir(path.join(paths.wikiDir, "sources")),
+    ensureDir(path.join(paths.wikiDir, "concepts")),
+    ensureDir(path.join(paths.wikiDir, "entities")),
+    ensureDir(path.join(paths.wikiDir, "outputs"))
+  ]);
+
+  for (const manifest of manifests) {
+    const analysis = analyses.find((item) => item.sourceId === manifest.sourceId);
+    if (!analysis) {
+      continue;
+    }
+    const sourcePage = buildSourcePage(manifest, analysis);
+    pages.push(sourcePage.page);
+    await writePage(rootDir, sourcePage.page.path, sourcePage.content, changedPages);
+  }
+
+  for (const aggregate of aggregateItems(analyses, "concepts")) {
+    const page = buildAggregatePage("concept", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes);
+    pages.push(page.page);
+    await writePage(rootDir, page.page.path, page.content, changedPages);
+  }
+
+  for (const aggregate of aggregateItems(analyses, "entities")) {
+    const page = buildAggregatePage("entity", aggregate.name, aggregate.descriptions, aggregate.sourceAnalyses, aggregate.sourceHashes);
+    pages.push(page.page);
+    await writePage(rootDir, page.page.path, page.content, changedPages);
+  }
+
+  const graph = buildGraph(manifests, analyses, pages);
+  await writeJsonFile(paths.graphPath, graph);
+  await writeJsonFile(paths.compileStatePath, {
+    generatedAt: graph.generatedAt,
+    analyses: Object.fromEntries(analyses.map((analysis) => [analysis.sourceId, analysisSignature(analysis)]))
+  });
+
+  await writePage(rootDir, "index.md", buildIndexPage(pages), changedPages);
+  await writePage(rootDir, "sources/index.md", buildSectionIndex("sources", pages.filter((page) => page.kind === "source")), changedPages);
+  await writePage(rootDir, "concepts/index.md", buildSectionIndex("concepts", pages.filter((page) => page.kind === "concept")), changedPages);
+  await writePage(rootDir, "entities/index.md", buildSectionIndex("entities", pages.filter((page) => page.kind === "entity")), changedPages);
+
+  await rebuildSearchIndex(paths.searchDbPath, pages, paths.wikiDir);
+  await appendLogEntry(rootDir, "compile", `Compiled ${manifests.length} source(s)`, [`provider=${provider.id}`, `pages=${pages.length}`]);
+
+  return {
+    graphPath: paths.graphPath,
+    pageCount: pages.length,
+    changedPages,
+    sourceCount: manifests.length
+  };
+}
+
+export async function queryVault(rootDir: string, question: string, save = false): Promise<QueryResult> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const provider = await getProviderForTask(rootDir, "queryProvider");
+  if (!(await fileExists(paths.searchDbPath))) {
+    await compileVault(rootDir);
+  }
+
+  const searchResults = searchPages(paths.searchDbPath, question, 5);
+  const excerpts = await Promise.all(
+    searchResults.map(async (result) => {
+      const absolutePath = path.join(paths.wikiDir, result.path);
+      const content = await fs.readFile(absolutePath, "utf8");
+      const parsed = matter(content);
+      return `# ${result.title}\n${truncate(normalizeWhitespace(parsed.content), 1200)}`;
+    })
+  );
+
+  let answer: string;
+  if (provider.type === "heuristic") {
+    answer = [
+      `Question: ${question}`,
+      "",
+      "Relevant pages:",
+      ...searchResults.map((result) => `- ${result.title} (${result.path})`),
+      "",
+      excerpts.length ? excerpts.join("\n\n") : "No relevant pages found yet."
+    ].join("\n");
+  } else {
+    const response = await provider.generateText({
+      system: "Answer using the provided SwarmVault excerpts. Cite source ids or page titles when possible.",
+      prompt: `Question: ${question}\n\nContext:\n${excerpts.join("\n\n---\n\n")}`
+    });
+    answer = response.text;
+  }
+
+  const citations = uniqueBy(
+    searchResults
+      .filter((result) => result.pageId.startsWith("source:"))
+      .map((result) => result.pageId.replace(/^source:/, "")),
+    (item) => item
+  );
+  let savedTo: string | undefined;
+  if (save) {
+    const output = buildOutputPage(question, answer, citations);
+    const absolutePath = path.join(paths.wikiDir, output.page.path);
+    await ensureDir(path.dirname(absolutePath));
+    await fs.writeFile(absolutePath, output.content, "utf8");
+    savedTo = absolutePath;
+  }
+
+  await appendLogEntry(rootDir, "query", question, [`citations=${citations.join(",") || "none"}`, `saved=${Boolean(savedTo)}`]);
+  return { answer, savedTo, citations };
+}
+
+export async function lintVault(rootDir: string): Promise<LintFinding[]> {
+  const { paths } = await loadVaultConfig(rootDir);
+  const manifests = await listManifests(rootDir);
+  const graph = await readJsonFile<GraphArtifact>(paths.graphPath);
+  const findings: LintFinding[] = [];
+
+  if (!graph) {
+    return [
+      {
+        severity: "warning",
+        code: "graph_missing",
+        message: "No graph artifact found. Run `swarmvault compile` first."
+      }
+    ];
+  }
+
+  const manifestMap = new Map(manifests.map((manifest) => [manifest.sourceId, manifest]));
+
+  for (const page of graph.pages) {
+    for (const [sourceId, knownHash] of Object.entries(page.sourceHashes)) {
+      const manifest = manifestMap.get(sourceId);
+      if (manifest && manifest.contentHash !== knownHash) {
+        findings.push({
+          severity: "warning",
+          code: "stale_page",
+          message: `Page ${page.title} is stale because source ${sourceId} changed.`,
+          pagePath: path.join(paths.wikiDir, page.path)
+        });
+      }
+    }
+
+    if (page.kind !== "index" && page.backlinks.length === 0) {
+      findings.push({
+        severity: "info",
+        code: "orphan_page",
+        message: `Page ${page.title} has no backlinks.`,
+        pagePath: path.join(paths.wikiDir, page.path)
+      });
+    }
+
+    const absolutePath = path.join(paths.wikiDir, page.path);
+    if (await fileExists(absolutePath)) {
+      const content = await fs.readFile(absolutePath, "utf8");
+      if (content.includes("## Claims")) {
+        const uncited = content
+          .split("\n")
+          .filter((line) => line.startsWith("- ") && !line.includes("[source:"));
+        if (uncited.length) {
+          findings.push({
+            severity: "warning",
+            code: "uncited_claims",
+            message: `Page ${page.title} contains uncited claim bullets.`,
+            pagePath: absolutePath
+          });
+        }
+      }
+    }
+  }
+
+  await appendLogEntry(rootDir, "lint", `Linted ${graph.pages.length} page(s)`, [`findings=${findings.length}`]);
+  return findings;
+}
+
+export async function bootstrapDemo(rootDir: string, input?: string): Promise<{ manifestId?: string; compile?: CompileResult }> {
+  await initVault(rootDir);
+  if (!input) {
+    return {};
+  }
+  const manifest = await ingestInput(rootDir, input);
+  const compile = await compileVault(rootDir);
+  return {
+    manifestId: manifest.sourceId,
+    compile
+  };
+}

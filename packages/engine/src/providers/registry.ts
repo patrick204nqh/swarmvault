@@ -1,0 +1,97 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { z } from "zod";
+import { loadVaultConfig } from "../config.js";
+import type { ProviderAdapter, ProviderCapability, ProviderConfig, ResolvedPaths } from "../types.js";
+import { HeuristicProviderAdapter } from "./heuristic.js";
+import { OpenAiCompatibleProviderAdapter } from "./openai-compatible.js";
+import { AnthropicProviderAdapter } from "./anthropic.js";
+import { GeminiProviderAdapter } from "./gemini.js";
+
+const customModuleSchema = z.object({
+  createAdapter: z.function({
+    input: [z.string(), z.custom<ProviderConfig>(), z.string()],
+    output: z.promise(z.custom<ProviderAdapter>())
+  })
+});
+
+function resolveCapabilities(config: ProviderConfig, fallback: ProviderCapability[]): ProviderCapability[] {
+  return config.capabilities?.length ? config.capabilities : fallback;
+}
+
+function envOrUndefined(name?: string): string | undefined {
+  return name ? process.env[name] : undefined;
+}
+
+export async function createProvider(id: string, config: ProviderConfig, rootDir: string): Promise<ProviderAdapter> {
+  switch (config.type) {
+    case "heuristic":
+      return new HeuristicProviderAdapter(id, config.model);
+    case "openai":
+      return new OpenAiCompatibleProviderAdapter(id, "openai", config.model, {
+        baseUrl: config.baseUrl ?? "https://api.openai.com/v1",
+        apiKey: envOrUndefined(config.apiKeyEnv),
+        headers: config.headers,
+        apiStyle: config.apiStyle ?? "responses",
+        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming"])
+      });
+    case "ollama":
+      return new OpenAiCompatibleProviderAdapter(id, "ollama", config.model, {
+        baseUrl: config.baseUrl ?? "http://localhost:11434/v1",
+        apiKey: envOrUndefined(config.apiKeyEnv) ?? "ollama",
+        headers: config.headers,
+        apiStyle: config.apiStyle ?? "responses",
+        capabilities: resolveCapabilities(config, ["responses", "chat", "structured", "tools", "vision", "streaming", "local"])
+      });
+    case "openai-compatible":
+      return new OpenAiCompatibleProviderAdapter(id, "openai-compatible", config.model, {
+        baseUrl: config.baseUrl ?? "http://localhost:8000/v1",
+        apiKey: envOrUndefined(config.apiKeyEnv),
+        headers: config.headers,
+        apiStyle: config.apiStyle ?? "responses",
+        capabilities: resolveCapabilities(config, ["chat", "structured"])
+      });
+    case "anthropic":
+      return new AnthropicProviderAdapter(id, config.model, {
+        apiKey: envOrUndefined(config.apiKeyEnv),
+        headers: config.headers,
+        baseUrl: config.baseUrl
+      });
+    case "gemini":
+      return new GeminiProviderAdapter(id, config.model, {
+        apiKey: envOrUndefined(config.apiKeyEnv),
+        baseUrl: config.baseUrl
+      });
+    case "custom": {
+      if (!config.module) {
+        throw new Error(`Provider ${id} is type "custom" but no module path was configured.`);
+      }
+      const resolvedModule = path.isAbsolute(config.module) ? config.module : path.resolve(rootDir, config.module);
+      const loaded = await import(pathToFileURL(resolvedModule).href);
+      const parsed = customModuleSchema.parse(loaded);
+      return parsed.createAdapter(id, config, rootDir);
+    }
+    default:
+      throw new Error(`Unsupported provider type ${String(config.type)}`);
+  }
+}
+
+export async function getProviderForTask(rootDir: string, task: keyof Awaited<ReturnType<typeof loadVaultConfig>>["config"]["tasks"]): Promise<ProviderAdapter> {
+  const { config } = await loadVaultConfig(rootDir);
+  const providerId = config.tasks[task];
+  const providerConfig = config.providers[providerId];
+  if (!providerConfig) {
+    throw new Error(`No provider configured with id "${providerId}" for task "${task}".`);
+  }
+  return createProvider(providerId, providerConfig, rootDir);
+}
+
+export function assertProviderCapability(provider: ProviderAdapter, capability: ProviderCapability): void {
+  if (!provider.capabilities.has(capability)) {
+    throw new Error(`Provider ${provider.id} does not support required capability "${capability}".`);
+  }
+}
+
+export async function getResolvedPaths(rootDir: string): Promise<ResolvedPaths> {
+  return (await loadVaultConfig(rootDir)).paths;
+}
