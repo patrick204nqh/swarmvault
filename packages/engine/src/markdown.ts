@@ -107,6 +107,10 @@ function sourceHashFrontmatter(sourceHashes: Record<string, string>, sourceSeman
   };
 }
 
+function cssclassesFor(kind: string): string[] {
+  return ["swarmvault", `sv-${kind.replace(/_/g, "-")}`];
+}
+
 function decoratedTags(baseTags: string[], decorations?: GeneratedPageDecorations): string[] {
   return uniqueStrings([
     ...baseTags,
@@ -226,6 +230,7 @@ export function buildSourcePage(
   const frontmatter = {
     page_id: pageId,
     kind: "source",
+    cssclasses: cssclassesFor("source"),
     title: analysis.title,
     ...(manifest.sourceType ? { source_type: manifest.sourceType } : {}),
     ...(manifest.sourceClass ? { source_class: manifest.sourceClass } : {}),
@@ -418,6 +423,7 @@ export function buildModulePage(input: {
   const frontmatter = {
     page_id: pageId,
     kind: "module",
+    cssclasses: cssclassesFor("module"),
     title,
     ...(manifest.sourceClass ? { source_class: manifest.sourceClass } : {}),
     tags: decoratedTags(["module", "code", code.language], { projectIds: input.projectIds, extraTags: input.extraTags }),
@@ -551,6 +557,7 @@ export function buildAggregatePage(
   const frontmatter = {
     page_id: pageId,
     kind,
+    cssclasses: cssclassesFor(kind),
     title: name,
     ...(decorations?.sourceClass ? { source_class: decorations.sourceClass } : {}),
     tags: decoratedTags(metadata.status === "candidate" ? [kind, "candidate"] : [kind], decorations),
@@ -729,6 +736,7 @@ export function buildSectionIndex(
     {
       page_id: `${kind}:index`,
       kind: "index",
+      cssclasses: cssclassesFor("index"),
       title,
       tags: decoratedTags(["index", kind], { projectIds }),
       source_ids: [],
@@ -1212,6 +1220,7 @@ export function buildGraphReportPage(input: {
   const frontmatter = {
     page_id: pageId,
     kind: "graph_report",
+    cssclasses: cssclassesFor("graph_report"),
     title: "Graph Report",
     tags: ["graph", "report"],
     source_ids: relatedSourceIds,
@@ -1410,6 +1419,7 @@ export function buildCommunitySummaryPage(input: {
   const frontmatter = {
     page_id: pageId,
     kind: "community_summary",
+    cssclasses: cssclassesFor("community"),
     title: `Community: ${input.community.label}`,
     tags: ["graph", "community"],
     source_ids: relatedSourceIds,
@@ -1495,6 +1505,7 @@ export function buildProjectsIndex(projectPages: GraphPage[], schemaHash: string
     {
       page_id: "projects:index",
       kind: "index",
+      cssclasses: cssclassesFor("index"),
       title: "Projects",
       tags: ["index", "projects"],
       source_ids: [],
@@ -1566,6 +1577,7 @@ export function buildProjectIndex(input: {
     {
       page_id: `project:${input.projectId}:index`,
       kind: "index",
+      cssclasses: cssclassesFor("index"),
       title,
       tags: decoratedTags(["index", "projects"], { projectIds: [input.projectId] }),
       source_ids: [],
@@ -1615,6 +1627,7 @@ export function buildOutputPage(input: {
   const frontmatter = {
     page_id: pageId,
     kind: "output",
+    cssclasses: cssclassesFor("output"),
     title: input.title ?? input.question,
     tags: decoratedTags(["output"], { projectIds: input.projectIds, extraTags: input.extraTags }),
     source_ids: input.citations,
@@ -1768,6 +1781,7 @@ export function buildExploreHubPage(input: {
   const frontmatter = {
     page_id: pageId,
     kind: "output",
+    cssclasses: cssclassesFor("output"),
     title,
     tags: decoratedTags(["output", "explore"], { projectIds: input.projectIds, extraTags: input.extraTags }),
     source_ids: relatedSourceIds,

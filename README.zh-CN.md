@@ -358,7 +358,7 @@ clawhub install swarmvault
 
 **图谱 diff** - `swarmvault diff` 将当前知识图谱与上次提交的版本进行对比，显示新增/移除的节点、边和页面，让你清楚看到每次 compile 改变了什么。
 
-**Obsidian 图谱导出** - `graph export --obsidian` 会写出一个适合 Obsidian 打开的笔记包，保留原有 wiki 目录结构，附加图谱连接、社区页面、孤立节点 stub、复制后的资产文件，以及最小化的 `.obsidian` 配置。
+**Obsidian 图谱导出** - `graph export --obsidian` 会写出一个适合 Obsidian 打开的笔记包，保留原有 wiki 目录结构，附加图谱连接和适配 Breadcrumbs/Juggl 的类型化链接 frontmatter、社区页面、孤立节点 stub、Dataview 仪表盘页面、复制后的资产文件，以及包含 `types.json`、节点类型颜色分组和 `cssclasses` 的完整 `.obsidian` 配置。
 
 **自适应图谱社区划分** - SwarmVault 会根据小图或稀疏图自动调整 Louvain community resolution；如果你想固定聚类结果，可以在 `swarmvault.config.json` 中设置 `graph.communityResolution`。
 

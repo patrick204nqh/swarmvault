@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.28
+
+- Upgraded `graph export --obsidian` with `.obsidian/types.json` for correct property typing in Obsidian Bases and Dataview, node-type color groups in the native `{a, rgb}` format so the graph view lights up by source/module/concept/entity, typed link frontmatter grouped by relation for Breadcrumbs/Juggl/ExcaliBrain, graph metrics (`degree`, `bridge_score`, `is_god_node`) in exported frontmatter, `cssclasses` on every page for per-type CSS styling, and pre-built Dataview dashboard pages under `graph/dashboards/`
+- Upgraded `graph export --canvas` to use `file` nodes that open the actual wiki page on click (falling back to `text` for orphan nodes), plus directional arrows and side hints on edges for cleaner layout
+- Added `cssclasses: [swarmvault, sv-{kind}]` to all compiled page types so Obsidian CSS snippets can target source, module, concept, entity, output, and dashboard pages independently
+
 ## 0.7.27
 
 - Made `graph export --html-standalone` fully offline by bundling vis-network inline instead of loading it from a CDN, so exported HTML files work without internet access

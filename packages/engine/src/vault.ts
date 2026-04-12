@@ -4202,11 +4202,40 @@ async function ensureObsidianWorkspace(rootDir: string): Promise<void> {
       showTags: true,
       showAttachments: false,
       hideUnresolved: false,
-      colorGroups: projectIds.map((projectId, index) => ({
-        query: `tag:#project/${projectId}`,
-        color: ["#0ea5e9", "#22c55e", "#f59e0b", "#fb7185", "#8b5cf6", "#14b8a6"][index % 6]
-      })),
+      colorGroups: [
+        { query: "tag:#source", color: { a: 1, rgb: 0xf59e0b } },
+        { query: "tag:#module", color: { a: 1, rgb: 0xfb7185 } },
+        { query: "tag:#concept", color: { a: 1, rgb: 0x0ea5e9 } },
+        { query: "tag:#entity", color: { a: 1, rgb: 0x22c55e } },
+        { query: "tag:#rationale", color: { a: 1, rgb: 0x14b8a6 } },
+        { query: "tag:#symbol", color: { a: 1, rgb: 0x8b5cf6 } },
+        ...projectIds.map((projectId, index) => ({
+          query: `tag:#project/${projectId}`,
+          color: { a: 1, rgb: [0x0ea5e9, 0x22c55e, 0xf59e0b, 0xfb7185, 0x8b5cf6, 0x14b8a6][index % 6] }
+        }))
+      ],
       localJumps: false
+    }),
+    writeJsonFile(path.join(obsidianDir, "types.json"), {
+      types: {
+        page_id: "text",
+        kind: "text",
+        title: "text",
+        tags: "tags",
+        aliases: "aliases",
+        source_ids: "multitext",
+        project_ids: "multitext",
+        node_ids: "multitext",
+        freshness: "text",
+        status: "text",
+        confidence: "number",
+        created_at: "datetime",
+        updated_at: "datetime",
+        compiled_from: "multitext",
+        managed_by: "text",
+        backlinks: "multitext",
+        cssclasses: "multitext"
+      }
     }),
     writeJsonFile(path.join(obsidianDir, "workspace.json"), {
       active: "root",

@@ -360,7 +360,7 @@ That installs the published `SKILL.md` plus a ClawHub README, examples, referenc
 
 **Graph diff** - `swarmvault diff` compares the current knowledge graph against the last committed version, showing added/removed nodes, edges, and pages so you can see exactly what a compile changed.
 
-**Obsidian graph export** - `graph export --obsidian` writes an Obsidian-friendly bundle that preserves wiki folders, appends graph connections, emits community notes and orphan-node stubs, copies assets, and includes a minimal `.obsidian` config.
+**Obsidian graph export** - `graph export --obsidian` writes an Obsidian-friendly bundle that preserves wiki folders, appends graph connections with typed link frontmatter for Breadcrumbs/Juggl, emits community notes and orphan-node stubs, copies assets, generates Dataview dashboard pages, and includes a full `.obsidian` config with `types.json`, node-type color groups, and `cssclasses` on every page.
 
 **Adaptive graph communities** - SwarmVault auto-tunes Louvain community resolution for very small or sparse graphs, and you can pin a specific value with `graph.communityResolution` in `swarmvault.config.json`.
 

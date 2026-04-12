@@ -360,7 +360,7 @@ clawhub install swarmvault
 
 **グラフ diff** - `swarmvault diff` は現在のナレッジグラフを最後にコミットされたバージョンと比較し、追加/削除されたノード、エッジ、ページを表示して、compile で何が変わったかを正確に確認できます。
 
-**Obsidian グラフ export** - `graph export --obsidian` は、既存 wiki フォルダ構成を保ちつつ、グラフ接続、community note、orphan node stub、コピー済みアセット、最小構成の `.obsidian` 設定を含む Obsidian 向け note bundle を書き出します。
+**Obsidian グラフ export** - `graph export --obsidian` は、既存 wiki フォルダ構成を保ちつつ、Breadcrumbs/Juggl 対応の型付きリンク frontmatter 付きグラフ接続、community note、orphan node stub、Dataview ダッシュボードページ、コピー済みアセット、`types.json`・ノードタイプ別カラーグループ・`cssclasses` を含む完全な `.obsidian` 設定を含む Obsidian 向け note bundle を書き出します。
 
 **適応的なコミュニティ分割** - SwarmVault は小規模または疎なグラフでは Louvain の community resolution を自動調整します。クラスタリング結果を固定したい場合は `swarmvault.config.json` で `graph.communityResolution` を設定してください。
 

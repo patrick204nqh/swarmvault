@@ -29,6 +29,39 @@ function loadVisNetworkJs(): string {
   return _visNetworkJs;
 }
 
+function hexToObsidianColor(hex: string): { a: number; rgb: number } {
+  return { a: 1, rgb: Number.parseInt(hex.replace("#", ""), 16) };
+}
+
+const OBSIDIAN_PROPERTY_TYPES: Record<string, string> = {
+  page_id: "text",
+  kind: "text",
+  title: "text",
+  tags: "tags",
+  aliases: "aliases",
+  source_ids: "multitext",
+  project_ids: "multitext",
+  node_ids: "multitext",
+  freshness: "text",
+  status: "text",
+  confidence: "number",
+  created_at: "datetime",
+  updated_at: "datetime",
+  compiled_from: "multitext",
+  managed_by: "text",
+  backlinks: "multitext",
+  schema_hash: "text",
+  source_class: "text",
+  source_type: "text",
+  language: "text",
+  graph_community: "text",
+  degree: "number",
+  bridge_score: "number",
+  is_god_node: "checkbox",
+  community: "text",
+  cssclasses: "multitext"
+};
+
 const NODE_COLORS: Record<string, string> = {
   source: "#f59e0b",
   module: "#fb7185",
@@ -852,6 +885,31 @@ function connectionsSection(
   return lines;
 }
 
+function typedLinkFrontmatter(
+  nodeIds: string[],
+  adjacency: Map<string, AdjacencyEntry[]>,
+  nodesById: Map<string, GraphNode>,
+  wikilinkTarget: Map<string, string>
+): Record<string, string[]> {
+  const byRelation = new Map<string, string[]>();
+  const seen = new Set<string>();
+  for (const nodeId of nodeIds) {
+    for (const entry of adjacency.get(nodeId) ?? []) {
+      const key = `${entry.neighborId}:${entry.relation}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const neighbor = nodesById.get(entry.neighborId);
+      if (!neighbor) continue;
+      const target = wikilinkTarget.get(entry.neighborId);
+      if (!target) continue;
+      const bucket = byRelation.get(entry.relation) ?? [];
+      bucket.push(`[[${target}|${neighbor.label}]]`);
+      byRelation.set(entry.relation, bucket);
+    }
+  }
+  return Object.fromEntries(byRelation);
+}
+
 export async function exportObsidianVault(rootDir: string, outputDir: string): Promise<GraphExportResult> {
   const graph = await loadGraph(rootDir);
   const { paths } = await loadVaultConfig(rootDir);
@@ -926,19 +984,30 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
     const data = parsed.data as Record<string, unknown>;
 
     if (pageNodes.length > 0) {
-      // Add graph community from primary node
       const primaryNode = pageNodes[0];
       if (primaryNode.communityId) {
         data.graph_community = primaryNode.communityId;
       }
+      data.degree = primaryNode.degree ?? 0;
+      data.bridge_score = primaryNode.bridgeScore ?? 0;
+      data.is_god_node = primaryNode.isGodNode ?? false;
 
-      // Add aliases: node labels that differ from the page title
       const title = (data.title as string) ?? "";
       const nodeAliases = pageNodes.map((n) => n.label).filter((label) => label.toLowerCase() !== title.toLowerCase());
       const existingAliases: string[] = Array.isArray(data.aliases) ? (data.aliases as string[]) : [];
       const mergedAliases = [...new Set([...existingAliases, ...nodeAliases])];
       if (mergedAliases.length > 0) {
         data.aliases = mergedAliases;
+      }
+
+      const typedLinks = typedLinkFrontmatter(
+        pageNodes.map((n) => n.id),
+        adjacency,
+        nodesById,
+        wikilinkTarget
+      );
+      for (const [relation, links] of Object.entries(typedLinks)) {
+        data[relation] = links;
       }
     }
 
@@ -977,10 +1046,18 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
       community: node.communityId ?? null,
       confidence: node.confidence ?? null,
       source_class: node.sourceClass ?? null,
-      tags: node.tags ?? []
+      degree: node.degree ?? 0,
+      bridge_score: node.bridgeScore ?? 0,
+      is_god_node: node.isGodNode ?? false,
+      tags: node.tags ?? [],
+      cssclasses: ["swarmvault", `sv-${node.type}`]
     };
     if (aliases.length > 0) {
       frontmatter.aliases = aliases;
+    }
+    const orphanTypedLinks = typedLinkFrontmatter([node.id], adjacency, nodesById, wikilinkTarget);
+    for (const [relation, links] of Object.entries(orphanTypedLinks)) {
+      frontmatter[relation] = links;
     }
 
     const lines = [`# ${node.label}`, ""];
@@ -1103,10 +1180,19 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
       {} as Record<string, boolean>
     )
   );
-  const colorGroups = projectIds.map((pid, index) => ({
+  const nodeTypeGroups = [
+    { query: "tag:#source", color: hexToObsidianColor("#f59e0b") },
+    { query: "tag:#module", color: hexToObsidianColor("#fb7185") },
+    { query: "tag:#concept", color: hexToObsidianColor("#0ea5e9") },
+    { query: "tag:#entity", color: hexToObsidianColor("#22c55e") },
+    { query: "tag:#rationale", color: hexToObsidianColor("#14b8a6") },
+    { query: "tag:#symbol", color: hexToObsidianColor("#8b5cf6") }
+  ];
+  const projectColorGroups = projectIds.map((pid, index) => ({
     query: `tag:#project/${pid}`,
-    color: ["#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6", "#fb7185", "#14b8a6"][index % 6]
+    color: hexToObsidianColor(["#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6", "#fb7185", "#14b8a6"][index % 6])
   }));
+  const colorGroups = [...nodeTypeGroups, ...projectColorGroups];
 
   await fs.writeFile(
     path.join(obsidianDir, "app.json"),
@@ -1131,7 +1217,45 @@ export async function exportObsidianVault(rootDir: string, outputDir: string): P
     ),
     "utf8"
   );
-  fileCount += 3;
+  await fs.writeFile(path.join(obsidianDir, "types.json"), JSON.stringify({ types: OBSIDIAN_PROPERTY_TYPES }, null, 2), "utf8");
+  fileCount += 4;
+
+  // Generate Dataview dashboard pages
+  const dashboardDir = path.join(resolvedOutputDir, "graph", "dashboards");
+  await ensureDir(dashboardDir);
+  const dvPages: Array<{ name: string; title: string; query: string }> = [
+    {
+      name: "sources-by-confidence",
+      title: "Sources by Confidence",
+      query: "TABLE confidence, source_class, updated_at FROM #source SORT confidence DESC"
+    },
+    {
+      name: "concepts-index",
+      title: "Concepts Index",
+      query: "TABLE degree, graph_community FROM #concept SORT degree DESC"
+    },
+    {
+      name: "stale-pages",
+      title: "Stale Pages",
+      query: 'TABLE freshness, updated_at FROM "" WHERE freshness = "stale"'
+    },
+    {
+      name: "god-nodes",
+      title: "God Nodes",
+      query: 'TABLE degree, bridge_score FROM "" WHERE is_god_node = true SORT degree DESC'
+    }
+  ];
+  for (const dv of dvPages) {
+    const dvFrontmatter = {
+      title: dv.title,
+      kind: "dashboard",
+      tags: ["dashboard", "dataview"],
+      cssclasses: ["swarmvault", "sv-dashboard"]
+    };
+    const dvBody = `# ${dv.title}\n\n\`\`\`dataview\n${dv.query}\n\`\`\`\n`;
+    await fs.writeFile(path.join(dashboardDir, `${dv.name}.md`), matter.stringify(dvBody, dvFrontmatter), "utf8");
+    fileCount++;
+  }
 
   return { format: "obsidian", outputPath: resolvedOutputDir, fileCount };
 }
@@ -1150,10 +1274,12 @@ export async function exportObsidianCanvas(rootDir: string, outputPath: string):
   const GRID_COLS = 3;
   const GROUP_GAP = 100;
 
+  const pageById = graphPageById(graph);
   const canvasNodes: Array<{
     id: string;
     type: string;
     text?: string;
+    file?: string;
     label?: string;
     x: number;
     y: number;
@@ -1161,7 +1287,16 @@ export async function exportObsidianCanvas(rootDir: string, outputPath: string):
     height: number;
     color?: string;
   }> = [];
-  const canvasEdges: Array<{ id: string; fromNode: string; toNode: string; label: string }> = [];
+  const canvasEdges: Array<{
+    id: string;
+    fromNode: string;
+    toNode: string;
+    fromSide: string;
+    toSide: string;
+    fromEnd: string;
+    toEnd: string;
+    label: string;
+  }> = [];
 
   // Map node id to canvas node id
   const nodeCanvasId = new Map<string, string>();
@@ -1232,17 +1367,31 @@ export async function exportObsidianCanvas(rootDir: string, outputPath: string):
       const canvasId = `node-${node.id}`;
       nodeCanvasId.set(node.id, canvasId);
 
-      const communityLabel = community.id === "community:unassigned" ? "Unassigned" : community.label;
-      canvasNodes.push({
-        id: canvasId,
-        type: "text",
-        text: `**${node.label}**\nType: ${node.type}\nCommunity: ${communityLabel}`,
-        x: nodeX,
-        y: nodeY,
-        width: NODE_WIDTH,
-        height: NODE_HEIGHT,
-        color: COLORS[communityIndex % COLORS.length]
-      });
+      const page = node.pageId ? pageById.get(node.pageId) : undefined;
+      if (page) {
+        canvasNodes.push({
+          id: canvasId,
+          type: "file",
+          file: page.path,
+          x: nodeX,
+          y: nodeY,
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+          color: COLORS[communityIndex % COLORS.length]
+        });
+      } else {
+        const communityLabel = community.id === "community:unassigned" ? "Unassigned" : community.label;
+        canvasNodes.push({
+          id: canvasId,
+          type: "text",
+          text: `**${node.label}**\nType: ${node.type}\nCommunity: ${communityLabel}`,
+          x: nodeX,
+          y: nodeY,
+          width: NODE_WIDTH,
+          height: NODE_HEIGHT,
+          color: COLORS[communityIndex % COLORS.length]
+        });
+      }
     });
   });
 
@@ -1255,6 +1404,10 @@ export async function exportObsidianCanvas(rootDir: string, outputPath: string):
       id: `edge-${edge.id}`,
       fromNode: fromId,
       toNode: toId,
+      fromSide: "right",
+      toSide: "left",
+      fromEnd: "none",
+      toEnd: "arrow",
       label: edge.relation
     });
   }
