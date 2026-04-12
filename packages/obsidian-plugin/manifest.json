@@ -1,0 +1,12 @@
+{
+  "id": "swarmvault",
+  "name": "SwarmVault",
+  "version": "0.7.29",
+  "minAppVersion": "1.5.0",
+  "description": "Drive your SwarmVault workspace from inside Obsidian — ingest, compile, query, and review without leaving the editor.",
+  "author": "SwarmVault",
+  "authorUrl": "https://www.swarmvault.ai",
+  "fundingUrl": "https://www.swarmvault.ai",
+  "isDesktopOnly": true,
+  "swarmvaultCliMinVersion": "0.7.28"
+}

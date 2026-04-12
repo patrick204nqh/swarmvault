@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.29
+
+- Added first-party Obsidian plugin (`@swarmvaultai/obsidian-plugin`) that drives the SwarmVault CLI from inside Obsidian: status bar shows workspace + compile freshness, command palette runs init/ingest/add/compile/lint/watch/serve, Query from current note returns answers with page_id→wikilink citations, Run Log view streams live stdout/stderr of every invocation, and long-running `watch`/`graph serve` processes are tracked in a managed-processes registry that drains on plugin unload
+- Extended the release-sync check to pin the plugin `package.json`, `manifest.json`, and `swarmvaultCliMinVersion` to the monorepo root version so the plugin never ships ahead of the CLI it talks to
+- Fixed citation rewriting to handle real SwarmVault page IDs containing colons and slashes (e.g. `concept:foo`, `source:arxiv/2401.00001`)
+
 ## 0.7.28
 
 - Upgraded `graph export --obsidian` with `.obsidian/types.json` for correct property typing in Obsidian Bases and Dataview, node-type color groups in the native `{a, rgb}` format so the graph view lights up by source/module/concept/entity, typed link frontmatter grouped by relation for Breadcrumbs/Juggl/ExcaliBrain, graph metrics (`degree`, `bridge_score`, `is_god_node`) in exported frontmatter, `cssclasses` on every page for per-type CSS styling, and pre-built Dataview dashboard pages under `graph/dashboards/`
